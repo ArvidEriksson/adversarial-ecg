@@ -1,5 +1,5 @@
-import h5py
 import argparse
+import h5py
 import numpy as np
 
 if __name__ == "__main__":
@@ -22,11 +22,11 @@ if __name__ == "__main__":
     layout = h5py.VirtualLayout(shape=(len(ids), 4096, 12), dtype='f4')
 
     end = 0
-    for i in range(len(args.files)):
+    for i, file in enumerate(args.files):
         start = end
         end = start + len(files[i]['exam_id'][:-1])
         print(start, end)
-        vsource = h5py.VirtualSource(args.files[i], 'tracings', shape=(end-start, 4096, 12))
+        vsource = h5py.VirtualSource(file, 'tracings', shape=(end-start, 4096, 12))
         layout[start:end, :, :] = vsource
 
     f.create_virtual_dataset('tracings', layout, fillvalue=0)

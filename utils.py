@@ -31,9 +31,6 @@ def pgd_attack(model, traces, labels, device, loss_function=nn.BCEWithLogitsLoss
         
     return adv_tracings
 
-
-
-
 class PGD():
     r"""
     PGD in the paper 'Towards Deep Learning Models Resistant to Adversarial Attacks'
@@ -130,9 +127,10 @@ def plot_ecgs(
         zoom_rate      = 2,
         zoom_box       = [1, 3, -1, 1] # x1, x2, y1, y2
         ):
-    """Plot multi lead ECG chart.
+    """Plot two multi lead ECG charts overlapping.
     # Arguments
-        ecg        : m x n ECG signal data, which m is number of leads and n is length of signal.
+        ecg1        : m x n ECG signal data, which m is number of leads and n is length of signal.
+        ecg2        : m x n ECG signal data, which m is number of leads and n is length of signal.
         sample_rate: Sample rate of the signal.
         title      : Title which will be shown on top off chart
         lead_index : Lead name array in the same order of ecg, will be shown on 
@@ -144,6 +142,9 @@ def plot_ecgs(
         show_lead_name : show lead name
         show_grid      : show grid
         show_separate_line  : show separate line
+        show_zoom      : show zoom
+        zoom_rate      : zoom rate
+        zoom_box       : placement of zoom box
     """
 
     if not lead_order:
