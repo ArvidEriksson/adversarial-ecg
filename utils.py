@@ -6,7 +6,7 @@ import torch
 from tqdm.notebook import trange, tqdm
 import torch.nn as nn
 import scipy.signal as sgn
-import autopgd_base
+import autopgd.autopgd_base as autopgd_base
 
 def pgd_attack(model, traces, labels, device, loss_function=nn.BCEWithLogitsLoss(), eps=4e-3, alpha=1e-3, steps=10):
     traces = traces.clone().detach().to(device)
