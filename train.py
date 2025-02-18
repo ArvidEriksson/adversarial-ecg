@@ -3,20 +3,19 @@ import os
 import torch
 import torch.nn as nn
 import numpy as np
-from tqdm.notebook import trange, tqdm
+from tqdm import tqdm
 import h5py
-from torch.utils.data import TensorDataset, random_split, DataLoader
+from torch.utils.data import TensorDataset, random_split, DataLoader, Dataset
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score, f1_score
 from utils import pgd_attack, train_loop, eval_loop, train_loop_apgd, eval_loop_apgd
-import utils
 from models import ResNet1d
 import argparse
 from warnings import warn
 import json
 
-from dataloader import BatchDataloader
+from dataloader import BatchDataloader, H5Dataset
 
 if __name__ == "__main__":
 
@@ -51,6 +50,8 @@ if __name__ == "__main__":
                         help = 'ending epsilon for adversarial training (default: 0.01)')
     parser.add_argument('--adv_steps', type=int, default=10,
                         help = 'number of steps for the adversarial attack (default: 10)')
+    parser.add_argument('--cuda_device', type=int, default=0,
+                        help='CUDA device to use (default: 0)')
     
     args, unk = parser.parse_known_args()
     # Check for unknown options
@@ -58,8 +59,8 @@ if __name__ == "__main__":
         warn("Unknown arguments:" + str(unk) + ".")
     
     # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    tqdm.write("Use device: {device:}\n".format(device=device))
+    device = torch.device(f'cuda:{args.cuda_device}' if torch.cuda.is_available() else 'cpu')
+    tqdm.write("Using device: {device:}".format(device=device))
     
     # Load the data
     num_epochs = args.epochs
@@ -153,48 +154,55 @@ if __name__ == "__main__":
         # val_labels = 1 - val_labels
 
     else:
-        raise ValueError("Dataset not recognized.")
+        raise ValueError("Dataset not recognized.")    
 
     # Make into torch tensor
     train_labels = torch.tensor(train_labels, dtype=torch.float32).reshape(-1,1)
     val_labels = torch.tensor(val_labels, dtype=torch.float32).reshape(-1,1)
     test_labels = torch.tensor(test_labels, dtype=torch.float32).reshape(-1,1)
 
-    # Define dataloaders
-    train_dataloader = BatchDataloader(train_traces, train_labels, batch_size=batch_size)
-    val_dataloader = BatchDataloader(val_traces, val_labels, batch_size=batch_size)
-    test_dataloader = BatchDataloader(test_traces, test_labels, batch_size=batch_size)
+    train_dataset = H5Dataset(path_to_train,'tracings',train_labels)
+    val_dataset = H5Dataset(path_to_val,'tracings',val_labels)
+    test_dataset = H5Dataset(path_to_test,'tracings',test_labels)
 
-    loss_function = nn.BCELoss()
+    # Define dataloaders
+    # train_dataloader = BatchDataloader(train_traces, train_labels, batch_size=batch_size)
+    # val_dataloader = BatchDataloader(val_traces, val_labels, batch_size=batch_size)
+    # test_dataloader = BatchDataloader(test_traces, test_labels, batch_size=batch_size)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+
+    loss_function = nn.BCEWithLogitsLoss()
 
     # schedule the epsilon values of each epoch
     eps_values = np.exp(np.linspace(np.log(start_eps), np.log(end_eps), num_epochs - adversarial_delay))
     
     os.makedirs(output_model_path, exist_ok=True)
     
-    tqdm.write("Defining model...")
-    model = ResNet1d(input_dim=(12, 4096), n_classes=1, blocks_dim=[(64, 4096), (128, 1024), (196, 256), (256, 64), (320, 16)], activation_function=nn.GELU)#, kernel_size=3, dropout_rate=0.8
+    model = ResNet1d(input_dim=(12, 4096), n_classes=1, blocks_dim=[(64, 4096), (128, 1024), (196, 256), (256, 64), (320, 16)], activation_function=nn.GELU())#, kernel_size=3, dropout_rate=0.8
 
     if finetuning:
-        tqdm.write("Load pretrained model...")
+        tqdm.write("Loading pretrained model")
         checkpoint = torch.load(pretrained_model_path, map_location=device)
         model.load_state_dict(checkpoint['model'])
 
     model.to(device=device)
-    tqdm.write("Done!\n")
+    tqdm.write("Model defined")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     lr_scheduler = None #torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='e
 
-    tqdm.write("Training...")
-    best_loss = np.Inf
+    tqdm.write("Training model")
+    best_loss = np.inf
     # allocation
     train_loss_all, valid_loss_all, adv_valid_loss_all = [], [], []
     auroc_all, ap_all, accuracy_all, f1_all = [], [], [], []
 
     # loop over epochs
-    for epoch in trange(1, num_epochs + 1):
+    for epoch in tqdm(range(1, num_epochs + 1)):
         # training loop
         adversarial = False if epoch <= adversarial_delay else True
         adv_eps = eps_values[epoch - adversarial_delay - 1] if epoch > adversarial_delay else 0

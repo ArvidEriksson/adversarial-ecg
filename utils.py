@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import AutoMinorLocator
 import numpy as np
 import torch
-from tqdm.notebook import trange, tqdm
+from tqdm import tqdm
 import torch.nn as nn
 import scipy.signal as sgn
 import autopgd.autopgd_base as autopgd_base
@@ -271,7 +271,7 @@ def train_loop(epoch, dataloader, model, optimizer, loss_function, device, adver
     total_loss = 0  # accumulated loss
     n_entries = 0   # accumulated number of data points
     # progress bar def
-    train_pbar = tqdm(dataloader, desc="Training Epoch {epoch:2d}".format(epoch=epoch), leave=True)
+    train_pbar = tqdm(dataloader, desc=f"Training epoch {epoch:2d}", leave=True)
     # training loop
     for traces, diagnoses in train_pbar:
         optimizer.zero_grad()
@@ -313,7 +313,7 @@ def train_loop_apgd(epoch, dataloader, model, optimizer, loss_function, device, 
     n_entries = 0   # accumulated number of data points
     attack = autopgd_base.APGDAttack(model, n_iter=adv_iters, norm='Linf', n_restarts=adv_restarts, eps=adv_eps, seed=0, loss='bce', eot_iter=1, rho=.75, device=device)
     # progress bar def
-    train_pbar = tqdm(dataloader, desc="Training Epoch {epoch:2d}".format(epoch=epoch), leave=True)
+    train_pbar = tqdm(dataloader, desc=f"Training epoch {epoch:2d}", leave=True)
     # training loop
     for traces, diagnoses in train_pbar:
         optimizer.zero_grad()
@@ -359,7 +359,7 @@ def eval_loop_apgd(epoch, dataloader, model, loss_function, device, adversarial=
     attack = autopgd_base.APGDAttack(model, n_iter=adv_iters, norm='Linf', n_restarts=adv_restarts, eps=adv_eps, seed=0, loss='bce', eot_iter=1, rho=.75, device=device)
     valid_pred, valid_true = [], []
     # progress bar def
-    eval_pbar = tqdm(dataloader, desc="Evaluation Epoch {epoch:2d}".format(epoch=epoch), leave=True)
+    eval_pbar = tqdm(dataloader, desc=f"Validating epoch {epoch:2d}", leave=True)
     # evaluation loop
     for traces_cpu, diagnoses_cpu in eval_pbar:
         # data to device (CPU or GPU if available)
@@ -404,7 +404,7 @@ def eval_loop(epoch, dataloader, model, loss_function, device, adversarial=False
     n_entries = 0   # accumulated number of data points
     valid_pred, valid_true = [], []
     # progress bar def
-    eval_pbar = tqdm(dataloader, desc="Evaluation Epoch {epoch:2d}".format(epoch=epoch), leave=True)
+    eval_pbar = tqdm(dataloader, desc=f"Validating epoch {epoch:2d}", leave=True)
     # evaluation loop
     for traces_cpu, diagnoses_cpu in eval_pbar:
         # data to device (CPU or GPU if available)

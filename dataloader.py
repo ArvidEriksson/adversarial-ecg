@@ -1,6 +1,8 @@
 import math
 import torch
+from torch.utils.data import Dataset
 import numpy as np
+import h5py
 
 
 class BatchDataloader:
@@ -32,3 +34,24 @@ class BatchDataloader:
             count += 1
             start = end
         return count
+    
+class H5Dataset(Dataset):
+    def __init__(self, file_path, dataset_name, labels):
+        self.file_path = file_path
+        self.dataset_name = dataset_name
+        self.labels = labels
+        self.file = h5py.File(file_path, 'r')
+        self.length = len(self.file[dataset_name])
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        sample = self.file[self.dataset_name][idx]
+        # Convert to torch tensor
+        sample = torch.tensor(sample, dtype=torch.float32)
+        label = self.labels[idx]
+        return (sample, label)
+
+    def __del__(self):
+        self.file.close()
