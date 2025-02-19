@@ -284,5 +284,14 @@ if __name__ == "__main__":
             'adv_steps': adv_steps
         }
     }
+
+    class NumpyEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, np.number):
+                return obj.item()
+            return super().default(obj)
+
     with open(output_model_path + '/metrics.json', 'w') as f:
-        json.dump(metrics, f, indent=4)
+        json.dump(metrics, f, indent=4, cls=NumpyEncoder)
