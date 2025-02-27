@@ -154,10 +154,16 @@ if __name__ == "__main__":
         val_df = val_df.reindex(val_traces_ids)
         test_df = test_df.reindex(test_traces_ids)
 
-        # Get labels
-        train_labels = train_df['AF'].values
-        val_labels = val_df['AF'].values
-        test_labels = test_df['AF'].values
+        # Get labels from the following columns
+        # 1dAVb	RBBB LBBB SB ST AF
+        train_labels = train_df[['1dAVb','RBBB','LBBB','SB','ST','AF']].values
+        val_labels = val_df[['1dAVb','RBBB','LBBB','SB','ST','AF']].values
+        test_labels = test_df[['1dAVb','RBBB','LBBB','SB','ST','AF']].values
+
+        # make every label that is not AF 0
+        # train_labels[train_labels != 'AF'] = 0
+        # val_labels[val_labels != 'AF'] = 0
+        # test_labels[test_labels != 'AF'] = 0
 
         # Invert values as to match PTB-XL where a "positive" sex corresponds to female
         # train_labels = 1 - train_labels
@@ -167,9 +173,9 @@ if __name__ == "__main__":
         raise ValueError("Dataset not recognized.")    
 
     # Make into torch tensor
-    train_labels = torch.tensor(train_labels, dtype=torch.float32).reshape(-1,1)
-    val_labels = torch.tensor(val_labels, dtype=torch.float32).reshape(-1,1)
-    test_labels = torch.tensor(test_labels, dtype=torch.float32).reshape(-1,1)
+    train_labels = torch.tensor(train_labels, dtype=torch.float32).reshape(-1,6)
+    val_labels = torch.tensor(val_labels, dtype=torch.float32).reshape(-1,6)
+    test_labels = torch.tensor(test_labels, dtype=torch.float32).reshape(-1,6)
 
     train_dataset = H5Dataset(path_to_train,'tracings',train_labels)
     val_dataset = H5Dataset(path_to_val,'tracings',val_labels)
@@ -196,7 +202,7 @@ if __name__ == "__main__":
     
     os.makedirs(output_model_path, exist_ok=True)
     
-    model = ResNet1d(input_dim=(12, 4096), n_classes=1, blocks_dim=[(64, 4096), (128, 1024), (196, 256), (256, 64), (320, 16)], activation_function=nn.GELU())#, kernel_size=3, dropout_rate=0.8
+    model = ResNet1d(input_dim=(12, 4096), n_classes=6, blocks_dim=[(64, 4096), (128, 1024), (196, 256), (256, 64), (320, 16)], activation_function=nn.GELU())
 
     if finetuning:
         tqdm.write("Loading pretrained model")
@@ -238,19 +244,21 @@ if __name__ == "__main__":
         y_pred = torch.sigmoid(torch.tensor(y_pred)).numpy()
 
         # compute validation metrics for performance evaluation    
-        auroc = roc_auc_score(y_true, y_pred)
-        ap = average_precision_score(y_true, y_pred)
+
+        # compute AP for each class idependently
+        # auroc = roc_auc_score(y_true, y_pred)
+        ap = average_precision_score(y_true, y_pred, average=None)
         
-        y_pred = np.round(y_pred)
+        # y_pred = np.round(y_pred)
         
         # compute accuracy    
-        accuracy = accuracy_score(y_true, y_pred)
-        f1 = f1_score(y_true, y_pred, average='binary')
+        # accuracy = accuracy_score(y_true, y_pred)
+        # f1 = f1_score(y_true, y_pred, average='binary')
         
-        auroc_all.append(auroc)
+        # auroc_all.append(auroc)
         ap_all.append(ap)
-        accuracy_all.append(accuracy)
-        f1_all.append(f1)
+        # accuracy_all.append(accuracy)
+        # f1_all.append(f1)
 
         # # save best model: here we save the model only for the lowest validation loss
         if valid_loss < best_loss:
@@ -271,10 +279,10 @@ if __name__ == "__main__":
             f'Train Loss {train_loss:.6f} \t'
             f'Valid Loss {valid_loss:.6f} \t'
             f'Adversarial Loss {adv_valid_loss:.6f} \t'
-            f'AUROC {auroc:.6f} \t'
-            f'Accuracy {accuracy:.6f} \t'
-            f'F1 {f1:.6f} \t'
-            f'Average Precision {ap:.6f} \t'
+            # f'AUROC {auroc:.6f} \t'
+            # f'Accuracy {accuracy:.6f} \t'
+            # f'F1 {f1:.6f} \t'
+            f'Average Precision {ap.mean():.6f} \t'
             f'{model_save_state}'
         )
 
