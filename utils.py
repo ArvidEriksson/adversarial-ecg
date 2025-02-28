@@ -326,8 +326,9 @@ def train_loop_apgd(epoch, dataloader, model, optimizer, loss_function, device, 
         # adversarial training
         if adversarial:
             model.eval()
-            attack.init_hyperparam(traces)
-            (adv_traces, _, _, _) = attack.attack_single_run(traces, diagnoses)
+            adv_traces = attack.perturb(traces,diagnoses)
+            # attack.init_hyperparam(traces)
+            # (adv_traces, _, _, _) = attack.attack_single_run(traces, diagnoses)
             model.train()
             adv_output = model(adv_traces)
             

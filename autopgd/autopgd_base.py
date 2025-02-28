@@ -1,4 +1,4 @@
-# Copyright (c) 2020-present, Francesco Croce
+# Copyright (c) 2020-present, Francesco Croce (modified by Arvid Eriksson)
 # All rights reserved.
 #
 # This source code is licensed under the license found in the
@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import random
+from sklearn.metrics import hamming_loss
 
 from autopgd.other_utils import L0_norm, L1_norm, L2_norm
 from autopgd.checks import check_zero_gradients
@@ -285,12 +286,13 @@ class APGDAttack():
             check_zero_gradients(grad, logger=self.logger)
     
         if self.loss == 'bce':
-            acc = (logits.detach() > 0.).float() == y            
+            acc = ((logits.detach() > 0.) == y).float().mean(-1)
         else:
             acc = logits.detach().max(1)[1] == y
-     
-        acc_steps[0] = acc.view(acc_steps[0].shape) + 0
+        acc_steps[0] = acc + 0
         loss_best = loss_indiv.detach().clone()
+        if self.loss == 'bce':
+            loss_best = loss_best.mean(-1)
 
         alpha = 2. if self.norm in ['Linf', 'L2'] else 1. if self.norm in ['L1'] else 2e-2
         step_size = alpha * self.eps * torch.ones([x.shape[0], *(
@@ -381,11 +383,13 @@ class APGDAttack():
             grad /= float(self.eot_iter)
             
             if self.loss == 'bce':
-                pred = (logits.detach() > 0.).float() == y
+                # TODO!!!
+                pred = ((logits.detach() > 0.) == y).float().mean(-1)
             else:
                 pred = logits.detach().max(1)[1] == y
             acc = torch.min(acc, pred)
-            acc_steps[i + 1] = acc.view(acc_steps[0].shape) + 0
+            # TODO!!! fix acc_steps
+            acc_steps[i + 1] = acc + 0
             ind_pred = (pred == 0).nonzero().squeeze()
             x_best_adv[ind_pred] = x_adv[ind_pred] + 0.
             if self.verbose:
@@ -398,8 +402,10 @@ class APGDAttack():
             ### check step size
             with torch.no_grad():
               y1 = loss_indiv.detach().clone()
-              # reshape y1 to be the same shape as loss_steps
-              loss_steps[i] = y1.view(loss_steps[0].shape) + 0
+              if self.loss == 'bce':
+                  y1 = y1.mean(-1)
+
+              loss_steps[i] = y1 + 0
               ind = (y1 > loss_best).nonzero().squeeze()
               x_best[ind] = x_adv[ind].clone()
               grad_best[ind] = grad[ind].clone()
@@ -462,17 +468,33 @@ class APGDAttack():
 
         x = x.detach().clone().float().to(self.device)
         if not self.is_tf_model:
-            y_pred = self.model(x).max(1)[1]
+            if self.loss == 'bce':
+                y_pred = self.model(x) > 0.
+            else:
+                y_pred = self.model(x).max(1)[1]
         else:
-            y_pred = self.model.predict(x).max(1)[1]
+            if self.loss == 'bce':
+                y_pred = self.model.predict(x) > 0.  # might not work, have not tested for tf models
+            else:
+                y_pred = self.model.predict(x).max(1)[1]
         if y is None:
             #y_pred = self.predict(x).max(1)[1]
-            y = y_pred.detach().clone().long().to(self.device)
+            if self.loss == 'bce':
+                y = y_pred.detach().clone().to(self.device)
+            else:
+                y = y_pred.detach().clone().long().to(self.device)
         else:
-            y = y.detach().clone().long().to(self.device)
+            if self.loss == 'bce':
+                y = y.detach().clone().to(self.device)
+            else:
+                y = y.detach().clone().long().to(self.device)
 
         adv = x.clone()
-        if self.loss != 'ce-targeted':
+        if self.loss == 'bce':
+            # if loss is bce then we want to compare the last shape of y with y_pred and then take the mean in that direction
+            # so if y and y_pred has shape [32,6] the result should be [32] and not [32,6] and [32,1] should give [32]
+            acc = (y_pred == y).float().mean(-1)
+        elif self.loss != 'ce-targeted':
             acc = y_pred == y
         else:
             acc = y_pred != y
