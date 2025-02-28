@@ -187,9 +187,9 @@ if __name__ == "__main__":
     # test_dataloader = BatchDataloader(test_traces, test_labels, batch_size=batch_size)
 
     # Make the datasets very small for testing
-    # train_dataset = torch.utils.data.Subset(train_dataset, range(100))
-    # val_dataset = torch.utils.data.Subset(val_dataset, range(100))
-    # test_dataset = torch.utils.data.Subset(test_dataset, range(100))
+    # train_dataset = torch.utils.data.Subset(train_dataset, range(8000))
+    # val_dataset = torch.utils.data.Subset(val_dataset, range(1000))
+    # test_dataset = torch.utils.data.Subset(test_dataset, range(1000))
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
@@ -229,8 +229,9 @@ if __name__ == "__main__":
         
         train_loss = train_loop_apgd(epoch, train_dataloader, model, optimizer, loss_function, device, adversarial=adversarial, adv_eps=adv_eps, adv_iters=10, adv_restarts=1)
         # validation loop
-        valid_loss, y_pred, y_true = eval_loop(epoch, val_dataloader, model, loss_function, device)
-        adv_valid_loss, adv_y_pred, adv_y_true = eval_loop(epoch, val_dataloader, model, loss_function, device, adversarial=True)
+        valid_loss, y_pred, y_true = eval_loop_apgd(epoch, val_dataloader, model, loss_function, device, adversarial=False)
+        # adv_valid_loss, adv_y_pred, adv_y_true = eval_loop(epoch, val_dataloader, model, loss_function, device, adversarial=True)
+        adv_valid_loss, adv_y_pred, adv_y_true = eval_loop_apgd(epoch, val_dataloader, model, loss_function, device, adversarial=True, adv_eps=0.05, adv_iters=10, adv_restarts=1)
 
         # update learning rate
         scheduler.step(valid_loss)

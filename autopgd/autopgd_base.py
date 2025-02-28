@@ -11,7 +11,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import random
-from sklearn.metrics import hamming_loss
 
 from autopgd.other_utils import L0_norm, L1_norm, L2_norm
 from autopgd.checks import check_zero_gradients
@@ -265,7 +264,6 @@ class APGDAttack():
             if not self.is_tf_model:
                 with torch.enable_grad():
                     logits = self.model(x_adv)
-                    #logits = logits.squeeze()
                     loss_indiv = criterion_indiv(logits, y)
                     loss = loss_indiv.sum()
 
@@ -383,12 +381,10 @@ class APGDAttack():
             grad /= float(self.eot_iter)
             
             if self.loss == 'bce':
-                # TODO!!!
                 pred = ((logits.detach() > 0.) == y).float().mean(-1)
             else:
                 pred = logits.detach().max(1)[1] == y
             acc = torch.min(acc, pred)
-            # TODO!!! fix acc_steps
             acc_steps[i + 1] = acc + 0
             ind_pred = (pred == 0).nonzero().squeeze()
             x_best_adv[ind_pred] = x_adv[ind_pred] + 0.
@@ -410,7 +406,7 @@ class APGDAttack():
               x_best[ind] = x_adv[ind].clone()
               grad_best[ind] = grad[ind].clone()
               loss_best[ind] = y1[ind] + 0
-              loss_best_steps[i + 1] = loss_best.view(loss_best_steps[0].shape) + 0
+              loss_best_steps[i + 1] = loss_best + 0
 
               counter3 += 1
 
@@ -448,8 +444,8 @@ class APGDAttack():
                       grad[fl_redtopk] = grad_best[fl_redtopk].clone()
                   
                   counter3 = 0
+        # print(loss_steps)
                   #k = max(k - self.size_decr, self.n_iter_min)
-        
         return (x_best, acc, loss_best, x_best_adv)
 
     def perturb(self, x, y=None, best_loss=False, x_init=None):

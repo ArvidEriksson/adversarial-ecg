@@ -326,9 +326,7 @@ def train_loop_apgd(epoch, dataloader, model, optimizer, loss_function, device, 
         # adversarial training
         if adversarial:
             model.eval()
-            adv_traces = attack.perturb(traces,diagnoses)
-            # attack.init_hyperparam(traces)
-            # (adv_traces, _, _, _) = attack.attack_single_run(traces, diagnoses)
+            adv_traces = attack.perturb(traces,diagnoses,best_loss=True)
             model.train()
             adv_output = model(adv_traces)
             
@@ -365,11 +363,16 @@ def eval_loop_apgd(epoch, dataloader, model, loss_function, device, adversarial=
     for traces_cpu, diagnoses_cpu in eval_pbar:
         # data to device (CPU or GPU if available)
         traces, diagnoses = traces_cpu.to(device), diagnoses_cpu.to(device)
+        old_traces = traces.clone().detach()
         
         if adversarial:
             # generate adversarial samples
-            attack.init_hyperparam(traces)
-            (traces, _, _, _) = attack.attack_single_run(traces, diagnoses)
+            traces = attack.perturb(traces,diagnoses,best_loss=True)
+            # check if old traces are the same as the new ones
+            if torch.allclose(old_traces.cpu(), traces.cpu(), atol=1e-7):
+                print("WARNING: Adversarial attack failed")
+
+            # if using some post processing, i.e. smoothing (WIP)
             if post_process is not None:
                 #traces = filter_adversarial(traces, 400, fc=100)
                 traces = traces.cpu().numpy()
@@ -414,6 +417,8 @@ def eval_loop(epoch, dataloader, model, loss_function, device, adversarial=False
         if adversarial:
             # generate adversarial samples
             traces = pgd_attack(model, traces, diagnoses, device, eps=adv_eps, alpha=adv_alpha, steps=adv_steps)
+            
+            # if using some post processing, i.e. smoothing (WIP)
             if post_process is not None:
                 #traces = filter_adversarial(traces, 400, fc=100)
                 traces = traces.cpu().numpy()
