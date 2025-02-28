@@ -230,7 +230,6 @@ if __name__ == "__main__":
         train_loss = train_loop_apgd(epoch, train_dataloader, model, optimizer, loss_function, device, adversarial=adversarial, adv_eps=adv_eps, adv_iters=10, adv_restarts=1)
         # validation loop
         valid_loss, y_pred, y_true = eval_loop_apgd(epoch, val_dataloader, model, loss_function, device, adversarial=False)
-        # adv_valid_loss, adv_y_pred, adv_y_true = eval_loop(epoch, val_dataloader, model, loss_function, device, adversarial=True)
         adv_valid_loss, adv_y_pred, adv_y_true = eval_loop_apgd(epoch, val_dataloader, model, loss_function, device, adversarial=True, adv_eps=0.05, adv_iters=10, adv_restarts=1)
 
         # update learning rate
