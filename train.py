@@ -15,6 +15,7 @@ import argparse
 from warnings import warn
 import json
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+import ast
 
 from dataloader import BatchDataloader, H5Dataset
 
@@ -41,12 +42,10 @@ if __name__ == "__main__":
                         help='weight decay (default: 1e-2)')
     parser.add_argument('--output', default='./out',
                         help='output folder (default: ./out)')
-    parser.add_argument('--dataset', default='ptb-xl',
-                        help='dataset to use (default: ptb-xl)')
-    parser.add_argument('--dataset_path', default='./ptb-xl',
-                        help='path to dataset (default: ./ptb-xl)')
-    parser.add_argument('--fine_tune', action='store_true',
-                        help='use fine tuning (default: False)')
+    parser.add_argument('--dataset', default='ptbxl',
+                        help='dataset to use (default: ptbxl)')
+    parser.add_argument('--dataset_path', default='./ptbxl',
+                        help='path to dataset (default: ./ptbxl)')
     parser.add_argument('--pretrained_model', default=None,
                         help='path to pretrained model (default: None)')
     parser.add_argument('--adv_delay', type=int, default=10,
@@ -59,6 +58,8 @@ if __name__ == "__main__":
                         help = 'number of steps for the adversarial attack (default: 10)')
     parser.add_argument('--cuda_device', type=int, default=0,
                         help='CUDA device to use (default: 0)')
+    parser.add_argument('--target_variable', choices=['AF', 'six', 'age'], default='AF',
+                        help='the target variable to predict (default: AF). "six" stands for predicting the six labels in the CODE dataset')
     
     args, unk = parser.parse_known_args()
     # Check for unknown options
@@ -79,7 +80,6 @@ if __name__ == "__main__":
     lr_factor = args.lr_factor
     weight_decay = args.weight_decay
     output_model_path = args.output
-    finetuning = args.fine_tune
     pretrained_model_path = args.pretrained_model
     dataset = args.dataset
     dataset_path = args.dataset_path
@@ -87,6 +87,7 @@ if __name__ == "__main__":
     start_eps = args.start_eps
     end_eps = args.end_eps
     adv_steps = args.adv_steps
+    target_variable = args.target_variable
 
     # Set seed
     np.random.seed(seed)
@@ -97,33 +98,43 @@ if __name__ == "__main__":
     train_traces, val_traces, test_traces = None, None, None
     train_labels, val_labels, test_labels = None, None, None
 
-    if dataset == 'ptb-xl':
-        path_to_csv, path_to_scp = dataset_path + '/ptbxl_database.csv', dataset_path + '/scp_statements.csv'
+    if dataset == 'ptbxl':
+        path_to_csv = os.path.join(dataset_path, 'ptbxl_database.csv')
+        path_to_scp = os.path.join(dataset_path, 'scp_statements.csv')
+
+        df = pd.read_csv(path_to_csv, index_col='ecg_id')
+        df = df[df['age'] != 300]
+        df = df[df['age'] >= 18]
 
         # Get labels
-        df = pd.read_csv(path_to_csv, index_col='ecg_id')
-        # df = df[df['age'] != 300] filter out the 300 when doing age prediction
+        df.scp_codes = df.scp_codes.apply(lambda x: ast.literal_eval(x))
+
+        def has_key(dic, key_str):
+            for key in dic.keys():
+                if key == key_str:
+                    return 1
+            return 0
+        
+        if target_variable == 'six':
+            df['1dAVb'] = df.scp_codes.apply(lambda x: has_key(x, '1AVB'))
+            df['RBBB'] = df.scp_codes.apply(lambda x: has_key(x, 'CRBBB'))
+            df['LBBB'] = df.scp_codes.apply(lambda x: has_key(x, 'CLBBB'))
+            df['SB'] = df.scp_codes.apply(lambda x: has_key(x, 'SBRAD'))
+            df['ST'] = df.scp_codes.apply(lambda x: has_key(x, 'STACH'))
+            df['AF'] = df.scp_codes.apply(lambda x: has_key(x, 'AFIB'))
+        elif target_variable == 'AF': 
+            df['AF'] = df.scp_codes.apply(lambda x: has_key(x, 'AFIB'))
+        # age is already in the dataframe
 
         validation_fold = 9
         test_fold = 10
 
         # Load labels
-        train = df[(df.strat_fold != validation_fold) & (df.strat_fold != test_fold)]
-        val = df[df.strat_fold == validation_fold]
-        test = df[df.strat_fold == test_fold]
+        train_df = df[(df.strat_fold != validation_fold) & (df.strat_fold != test_fold)]
+        val_df = df[df.strat_fold == validation_fold]
+        test_df = df[df.strat_fold == test_fold]
 
-        # change this for other labels
-        train_labels = train['afib'].values
-        val_labels = val['afib'].values
-        test_labels = test['afib'].values
-
-        # Define traces
-        traces_train = h5py.File(path_to_train, 'r')['tracings']
-        traces_val = h5py.File(path_to_val, 'r')['tracings']
-        traces_test = h5py.File(path_to_test, 'r')['tracings']
-
-
-    if dataset == 'code':
+    elif dataset == 'code':
         path_to_csv = dataset_path + '/exams.csv'
 
         # Get labels
@@ -144,20 +155,10 @@ if __name__ == "__main__":
         val_df = df[df.index.isin(val_traces_ids)]
         test_df = df[df.index.isin(test_traces_ids)]
 
-        # Define traces
-        train_traces = train_file['tracings']
-        val_traces = val_file['tracings']
-        test_traces = test_file['tracings']
-
         # Sort the dataframe in trace order
         train_df = train_df.reindex(train_traces_ids)
         val_df = val_df.reindex(val_traces_ids)
         test_df = test_df.reindex(test_traces_ids)
-
-        # Get labels
-        train_labels = train_df['AF'].values
-        val_labels = val_df['AF'].values
-        test_labels = test_df['AF'].values
 
         # Invert values as to match PTB-XL where a "positive" sex corresponds to female
         # train_labels = 1 - train_labels
@@ -165,25 +166,38 @@ if __name__ == "__main__":
 
     else:
         raise ValueError("Dataset not recognized.")    
+    
+    # Depending on prediction target, we need to change the number of classes
+    num_classes = 6 if target_variable == 'six' else 1
+
+    if target_variable == 'six':
+        train_labels = train_df[['1dAVb','RBBB','LBBB','SB','ST','AF']].values
+        val_labels = val_df[['1dAVb','RBBB','LBBB','SB','ST','AF']].values
+        test_labels = test_df[['1dAVb','RBBB','LBBB','SB','ST','AF']].values
+    elif target_variable == 'AF':
+        train_labels = train_df['AF'].values
+        val_labels = val_df['AF'].values
+        test_labels = test_df['AF'].values
+    elif target_variable == 'age':
+        train_labels = train_df['age'].values
+        val_labels = val_df['age'].values
+        test_labels = test_df['age'].values
+    else:
+        raise ValueError("Target variable not recognized.")
 
     # Make into torch tensor
-    train_labels = torch.tensor(train_labels, dtype=torch.float32).reshape(-1,1)
-    val_labels = torch.tensor(val_labels, dtype=torch.float32).reshape(-1,1)
-    test_labels = torch.tensor(test_labels, dtype=torch.float32).reshape(-1,1)
+    train_labels = torch.tensor(train_labels, dtype=torch.float32).reshape(-1,num_classes)
+    val_labels = torch.tensor(val_labels, dtype=torch.float32).reshape(-1,num_classes)
+    test_labels = torch.tensor(test_labels, dtype=torch.float32).reshape(-1,num_classes)
 
     train_dataset = H5Dataset(path_to_train,'tracings',train_labels)
     val_dataset = H5Dataset(path_to_val,'tracings',val_labels)
     test_dataset = H5Dataset(path_to_test,'tracings',test_labels)
 
-    # Define dataloaders
-    # train_dataloader = BatchDataloader(train_traces, train_labels, batch_size=batch_size)
-    # val_dataloader = BatchDataloader(val_traces, val_labels, batch_size=batch_size)
-    # test_dataloader = BatchDataloader(test_traces, test_labels, batch_size=batch_size)
-
     # Make the datasets very small for testing
-    # train_dataset = torch.utils.data.Subset(train_dataset, range(100))
-    # val_dataset = torch.utils.data.Subset(val_dataset, range(100))
-    # test_dataset = torch.utils.data.Subset(test_dataset, range(100))
+    # train_dataset = torch.utils.data.Subset(train_dataset, range(1000))
+    # val_dataset = torch.utils.data.Subset(val_dataset, range(1000))
+    # test_dataset = torch.utils.data.Subset(test_dataset, range(1000))
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
@@ -196,9 +210,9 @@ if __name__ == "__main__":
     
     os.makedirs(output_model_path, exist_ok=True)
     
-    model = ResNet1d(input_dim=(12, 4096), n_classes=1, blocks_dim=[(64, 4096), (128, 1024), (196, 256), (256, 64), (320, 16)], activation_function=nn.GELU())#, kernel_size=3, dropout_rate=0.8
+    model = ResNet1d(input_dim=(12, 4096), n_classes=num_classes, blocks_dim=[(64, 4096), (128, 1024), (196, 256), (256, 64), (320, 16)], activation_function=nn.GELU())
 
-    if finetuning:
+    if pretrained_model_path is not None:
         tqdm.write("Loading pretrained model")
         checkpoint = torch.load(pretrained_model_path, map_location=device)
         model.load_state_dict(checkpoint['model'])
@@ -238,19 +252,21 @@ if __name__ == "__main__":
         y_pred = torch.sigmoid(torch.tensor(y_pred)).numpy()
 
         # compute validation metrics for performance evaluation    
-        auroc = roc_auc_score(y_true, y_pred)
-        ap = average_precision_score(y_true, y_pred)
+
+        # compute AP for each class idependently
+        # auroc = roc_auc_score(y_true, y_pred)
+        ap = average_precision_score(y_true, y_pred, average=None)
         
-        y_pred = np.round(y_pred)
+        # y_pred = np.round(y_pred)
         
         # compute accuracy    
-        accuracy = accuracy_score(y_true, y_pred)
-        f1 = f1_score(y_true, y_pred, average='binary')
+        # accuracy = accuracy_score(y_true, y_pred)
+        # f1 = f1_score(y_true, y_pred, average='binary')
         
-        auroc_all.append(auroc)
+        # auroc_all.append(auroc)
         ap_all.append(ap)
-        accuracy_all.append(accuracy)
-        f1_all.append(f1)
+        # accuracy_all.append(accuracy)
+        # f1_all.append(f1)
 
         # # save best model: here we save the model only for the lowest validation loss
         if valid_loss < best_loss:
@@ -271,10 +287,10 @@ if __name__ == "__main__":
             f'Train Loss {train_loss:.6f} \t'
             f'Valid Loss {valid_loss:.6f} \t'
             f'Adversarial Loss {adv_valid_loss:.6f} \t'
-            f'AUROC {auroc:.6f} \t'
-            f'Accuracy {accuracy:.6f} \t'
-            f'F1 {f1:.6f} \t'
-            f'Average Precision {ap:.6f} \t'
+            # f'AUROC {auroc:.6f} \t'
+            # f'Accuracy {accuracy:.6f} \t'
+            # f'F1 {f1:.6f} \t'
+            f'Average Precision {ap.mean():.6f} \t'
             f'{model_save_state}'
         )
 
