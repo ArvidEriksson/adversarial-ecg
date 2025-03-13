@@ -26,12 +26,14 @@ if __name__ == "__main__":
                                      description='Train model to predict from the raw ecg tracing.')
     parser.add_argument('--epochs', type=int, default=20,
                         help='maximum number of epochs (default: 20)')
-    parser.add_argument('--seed', type=int, default=2,
-                        help='random seed for number generator (default: 2)')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='random seed for number generator (default: 42)')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='batch size (default: 32).')
     parser.add_argument('--lr', type=float, default=0.001,
                         help='learning rate (default: 0.001)')
+    parser.add_argument('--scheduler', action='store_true',
+                        help='use a scheduler for the learning rate')
     parser.add_argument("--patience", type=int, default=7,
                         help='maximum number of epochs without reducing the learning rate (default: 7)')
     parser.add_argument("--min_lr", type=float, default=1e-7,
@@ -60,6 +62,8 @@ if __name__ == "__main__":
                         help='CUDA device to use (default: 0)')
     parser.add_argument('--target_variable', choices=['AF', 'six', 'age'], default='AF',
                         help='the target variable to predict (default: AF). "six" stands for predicting the six labels in the CODE dataset')
+    parser.add_argument('--freeze', action='store_true',
+                        help='freeze all layers except the last one')
     
     args, unk = parser.parse_known_args()
     # Check for unknown options
@@ -75,6 +79,7 @@ if __name__ == "__main__":
     seed = args.seed
     batch_size = args.batch_size
     learning_rate = args.lr
+    use_scheduler = args.scheduler
     patience = args.patience
     min_lr = args.min_lr
     lr_factor = args.lr_factor
@@ -88,6 +93,7 @@ if __name__ == "__main__":
     end_eps = args.end_eps
     adv_steps = args.adv_steps
     target_variable = args.target_variable
+    freeze = args.freeze
 
     # Set seed
     np.random.seed(seed)
@@ -194,7 +200,7 @@ if __name__ == "__main__":
     val_dataset = H5Dataset(path_to_val,'tracings',val_labels)
     test_dataset = H5Dataset(path_to_test,'tracings',test_labels)
 
-    # Make the datasets very small for testing
+    # Make the datasets smaller for testing
     # train_dataset = torch.utils.data.Subset(train_dataset, range(1000))
     # val_dataset = torch.utils.data.Subset(val_dataset, range(1000))
     # test_dataset = torch.utils.data.Subset(test_dataset, range(1000))
@@ -203,10 +209,14 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
-    loss_function = nn.BCEWithLogitsLoss()
+    if target_variable == 'age':
+        loss_function = nn.MSELoss()
+    else:
+        loss_function = nn.BCEWithLogitsLoss()
 
     # schedule the epsilon values of each epoch
-    eps_values = np.exp(np.linspace(np.log(start_eps), np.log(end_eps), num_epochs - adversarial_delay))
+    if num_epochs > adversarial_delay:
+        eps_values = np.exp(np.linspace(np.log(start_eps), np.log(end_eps), num_epochs - adversarial_delay))
     
     os.makedirs(output_model_path, exist_ok=True)
     
@@ -216,46 +226,65 @@ if __name__ == "__main__":
         tqdm.write("Loading pretrained model")
         checkpoint = torch.load(pretrained_model_path, map_location=device)
         model.load_state_dict(checkpoint['model'])
+        if freeze:
+            for param in model.parameters():
+                param.requires_grad = False
+            for param in model.lin.parameters():
+                param.requires_grad = True
 
     model.to(device=device)
     tqdm.write("Model defined")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=lr_factor, patience=patience, min_lr=min_lr)
+    if use_scheduler:
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=lr_factor, patience=patience, min_lr=min_lr)
 
     tqdm.write("Training model")
     best_loss = np.inf
     # allocation
     train_loss_all, valid_loss_all, adv_valid_loss_all = [], [], []
-    auroc_all, ap_all, accuracy_all, f1_all = [], [], [], []
+    if target_variable == 'age':
+        mae_all, mse_all = [], []
+    else:
+        ap_all = []
 
     # loop over epochs
     for epoch in tqdm(range(1, num_epochs + 1)):
         # training loop
         adversarial = False if epoch <= adversarial_delay else True
         adv_eps = eps_values[epoch - adversarial_delay - 1] if epoch > adversarial_delay else 0
-        
+
+        # train_loss = train_loop(epoch, train_dataloader, model, optimizer, loss_function, device, adversarial=adversarial, adv_eps=adv_eps, adv_alpha=adv_eps/5, adv_steps=adv_steps)
         train_loss = train_loop_apgd(epoch, train_dataloader, model, optimizer, loss_function, device, adversarial=adversarial, adv_eps=adv_eps, adv_iters=10, adv_restarts=1)
         # validation loop
         valid_loss, y_pred, y_true = eval_loop_apgd(epoch, val_dataloader, model, loss_function, device, adversarial=False)
         adv_valid_loss, adv_y_pred, adv_y_true = eval_loop_apgd(epoch, val_dataloader, model, loss_function, device, adversarial=True, adv_eps=0.05, adv_iters=10, adv_restarts=1)
 
         # update learning rate
-        scheduler.step(valid_loss)
+        if use_scheduler:
+            scheduler.step(valid_loss)
 
         # collect losses
         train_loss_all.append(train_loss)
         valid_loss_all.append(valid_loss)
         adv_valid_loss_all.append(adv_valid_loss)
         
-        # apply sigmoid to y_pred
-        y_pred = torch.sigmoid(torch.tensor(y_pred)).numpy()
-
         # compute validation metrics for performance evaluation    
 
         # compute AP for each class idependently
         # auroc = roc_auc_score(y_true, y_pred)
-        ap = average_precision_score(y_true, y_pred, average=None)
+        if target_variable == 'age':
+            mae = np.abs(y_true - y_pred).mean()
+            mse = ((y_true - y_pred)**2).mean()
+
+            mae_all.append(mae)
+            mse_all.append(mse)
+
+        else:
+            # apply sigmoid to y_pred
+            y_pred = torch.sigmoid(torch.tensor(y_pred)).numpy()
+            ap = average_precision_score(y_true, y_pred, average=None)
+            ap_all.append(ap)
         
         # y_pred = np.round(y_pred)
         
@@ -264,7 +293,6 @@ if __name__ == "__main__":
         # f1 = f1_score(y_true, y_pred, average='binary')
         
         # auroc_all.append(auroc)
-        ap_all.append(ap)
         # accuracy_all.append(accuracy)
         # f1_all.append(f1)
 
@@ -282,41 +310,60 @@ if __name__ == "__main__":
         torch.save({'model': model.state_dict()}, output_model_path + '/latest.pth') 
 
         # Print message
-        tqdm.write(
+        if target_variable == 'age':
+            tqdm.write(
             f'Epoch {epoch:2d}: \t'
             f'Train Loss {train_loss:.6f} \t'
             f'Valid Loss {valid_loss:.6f} \t'
             f'Adversarial Loss {adv_valid_loss:.6f} \t'
-            # f'AUROC {auroc:.6f} \t'
-            # f'Accuracy {accuracy:.6f} \t'
-            # f'F1 {f1:.6f} \t'
+            f'MAE {mae:.6f} \t'
+            f'MSE {mse:.6f} \t'
+            f'{model_save_state}'
+            )
+        else:
+            tqdm.write(
+            f'Epoch {epoch:2d}: \t'
+            f'Train Loss {train_loss:.6f} \t'
+            f'Valid Loss {valid_loss:.6f} \t'
+            f'Adversarial Loss {adv_valid_loss:.6f} \t'
             f'Average Precision {ap.mean():.6f} \t'
             f'{model_save_state}'
-        )
-
-        # Update learning rate with lr-scheduler
-        # if lr_scheduler:
-        #     lr_scheduler.step(valid_loss)
+            )
 
     # Save the metrics to file together with the hyperparameters
-    metrics = {
-        'train_loss': train_loss_all,
-        'valid_loss': valid_loss_all,
-        'adv_valid_loss': adv_valid_loss_all,
-        'auroc': auroc_all,
-        'ap': ap_all,
-        'accuracy': accuracy_all,
-        'f1': f1_all,
-        'hyperparameters': {
-            'learning_rate': learning_rate,
-            'weight_decay': weight_decay,
-            'num_epochs': num_epochs,
-            'batch_size': batch_size,
-            'adversarial_delay': adversarial_delay,
-            'adv_eps': adv_eps,
-            'adv_steps': adv_steps
+    if target_variable == 'age':
+        metrics = {
+            'train_loss': train_loss_all,
+            'valid_loss': valid_loss_all,
+            'adv_valid_loss': adv_valid_loss_all,
+            'mae': mae_all,
+            'mse': mse_all,
+            'hyperparameters': {
+                'learning_rate': learning_rate,
+                'weight_decay': weight_decay,
+                'num_epochs': num_epochs,
+                'batch_size': batch_size,
+                'adversarial_delay': adversarial_delay,
+                'adv_eps': adv_eps,
+                'adv_steps': adv_steps
+            }
         }
-    }
+    else:
+        metrics = {
+            'train_loss': train_loss_all,
+            'valid_loss': valid_loss_all,
+            'adv_valid_loss': adv_valid_loss_all,
+            'ap': ap_all,
+            'hyperparameters': {
+                'learning_rate': learning_rate,
+                'weight_decay': weight_decay,
+                'num_epochs': num_epochs,
+                'batch_size': batch_size,
+                'adversarial_delay': adversarial_delay,
+                'adv_eps': adv_eps,
+                'adv_steps': adv_steps
+            }
+        }
 
     class NumpyEncoder(json.JSONEncoder):
         def default(self, obj):
