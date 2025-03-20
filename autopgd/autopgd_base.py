@@ -236,6 +236,8 @@ class APGDAttack():
                 criterion_indiv = nn.CrossEntropyLoss(reduction='none')
             elif self.loss == 'bce':
                 criterion_indiv = nn.BCEWithLogitsLoss(reduction='none')
+            elif self.loss == 'mse':
+                criterion_indiv = nn.MSELoss(reduction='none')
             elif self.loss == 'ce-targeted-cfts':
                 criterion_indiv = lambda x, y: -1. * F.cross_entropy(x, y,
                     reduction='none')
@@ -266,7 +268,6 @@ class APGDAttack():
                     logits = self.model(x_adv)
                     loss_indiv = criterion_indiv(logits, y)
                     loss = loss_indiv.sum()
-
                 grad += torch.autograd.grad(loss, [x_adv])[0].detach()
             else:
                 if self.y_target is None:
@@ -285,11 +286,15 @@ class APGDAttack():
     
         if self.loss == 'bce':
             acc = ((logits.detach() > 0.) == y).float().mean(-1)
+        elif self.loss == 'mse':
+            acc = ((logits.detach() - y).pow(2)).mean(-1)
         else:
             acc = logits.detach().max(1)[1] == y
         acc_steps[0] = acc + 0
         loss_best = loss_indiv.detach().clone()
         if self.loss == 'bce':
+            loss_best = loss_best.mean(-1)
+        elif self.loss == 'mse':
             loss_best = loss_best.mean(-1)
 
         alpha = 2. if self.norm in ['Linf', 'L2'] else 1. if self.norm in ['L1'] else 2e-2
@@ -382,6 +387,8 @@ class APGDAttack():
             
             if self.loss == 'bce':
                 pred = ((logits.detach() > 0.) == y).float().mean(-1)
+            elif self.loss == 'mse':
+                pred = ((logits.detach() - y).pow(2)).mean(-1)
             else:
                 pred = logits.detach().max(1)[1] == y
             acc = torch.min(acc, pred)
@@ -399,6 +406,8 @@ class APGDAttack():
             with torch.no_grad():
               y1 = loss_indiv.detach().clone()
               if self.loss == 'bce':
+                  y1 = y1.mean(-1)
+              elif self.loss == 'mse':
                   y1 = y1.mean(-1)
 
               loss_steps[i] = y1 + 0
@@ -456,7 +465,7 @@ class APGDAttack():
                             are returned, otherwise adversarial examples
         """
 
-        assert self.loss in ['ce', 'dlr', 'bce'] #'ce-targeted-cfts'
+        assert self.loss in ['ce', 'dlr', 'bce', 'mse'] #'ce-targeted-cfts'
         if not y is None and len(y.shape) == 0:
             x.unsqueeze_(0)
             y.unsqueeze_(0)
@@ -466,21 +475,29 @@ class APGDAttack():
         if not self.is_tf_model:
             if self.loss == 'bce':
                 y_pred = self.model(x) > 0.
+            elif self.loss == 'mse':
+                y_pred = self.model(x)
             else:
                 y_pred = self.model(x).max(1)[1]
         else:
-            if self.loss == 'bce':
+            if self.loss == 'bce': 
                 y_pred = self.model.predict(x) > 0.  # might not work, have not tested for tf models
+            elif self.loss == 'mse':
+                y_pred = self.model.predict(x)
             else:
                 y_pred = self.model.predict(x).max(1)[1]
         if y is None:
             #y_pred = self.predict(x).max(1)[1]
             if self.loss == 'bce':
                 y = y_pred.detach().clone().to(self.device)
+            elif self.loss == 'mse':
+                y = y_pred.detach().clone().to(self.device)
             else:
                 y = y_pred.detach().clone().long().to(self.device)
         else:
             if self.loss == 'bce':
+                y = y.detach().clone().to(self.device)
+            elif self.loss == 'mse':
                 y = y.detach().clone().to(self.device)
             else:
                 y = y.detach().clone().long().to(self.device)
@@ -490,6 +507,9 @@ class APGDAttack():
             # if loss is bce then we want to compare the last shape of y with y_pred and then take the mean in that direction
             # so if y and y_pred has shape [32,6] the result should be [32] and not [32,6] and [32,1] should give [32]
             acc = (y_pred == y).float().mean(-1)
+        elif self.loss == 'mse':
+            # let th acc be the mse
+            acc = (y_pred - y).pow(2).mean(-1)
         elif self.loss != 'ce-targeted':
             acc = y_pred == y
         else:

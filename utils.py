@@ -311,7 +311,10 @@ def train_loop_apgd(epoch, dataloader, model, optimizer, loss_function, device, 
     # allocation
     total_loss = 0  # accumulated loss
     n_entries = 0   # accumulated number of data points
-    attack = autopgd_base.APGDAttack(model, n_iter=adv_iters, norm='Linf', n_restarts=adv_restarts, eps=adv_eps, seed=0, loss='bce', eot_iter=1, rho=.75, device=device)
+
+    apgd_loss = 'mse' if isinstance(loss_function, nn.MSELoss) else 'bce'
+
+    attack = autopgd_base.APGDAttack(model, n_iter=adv_iters, norm='Linf', n_restarts=adv_restarts, eps=adv_eps, seed=0, loss=apgd_loss, eot_iter=1, rho=.75, device=device)
     # progress bar def
     train_pbar = tqdm(dataloader, desc=f"Training epoch {epoch:2d}", leave=True)
     # training loop

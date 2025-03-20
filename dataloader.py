@@ -34,7 +34,8 @@ class BatchDataloader:
             count += 1
             start = end
         return count
-    
+
+
 class H5Dataset(Dataset):
     def __init__(self, file_path, dataset_name, labels):
         self.file_path = file_path
@@ -54,4 +55,30 @@ class H5Dataset(Dataset):
         return (sample, label)
 
     def __del__(self):
+        self.file.close()
+
+
+class MultExamH5Dataset(Dataset):
+    def __init__(self, file_path, labels, patient_ids):
+        self.file_path = file_path
+        self.labels = labels
+        self.patient_ids = patient_ids
+        self.file = h5py.File(file_path, 'r')
+        self.length = len(self.file['tracings'])
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        sample = self.file['tracings'][idx]
+        # Convert to torch tensor
+        sample = torch.tensor(sample, dtype=torch.float32)
+        label = self.labels[idx]
+        patient_id = self.patient_ids[idx]
+        return (sample, patient_id, label)
+
+    def __del__(self):
+        self.file.close()
+
+    def close(self):
         self.file.close()
